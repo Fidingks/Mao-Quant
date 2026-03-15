@@ -15,7 +15,7 @@ You have a trading idea. MaoQuant generates a complete backtest report with equi
 ## Quick Start
 
 ```bash
-npx skills add huajuancat/mao-quant
+npx skills add Fidingks/Mao-Quant
 ```
 
 Then tell your AI assistant:

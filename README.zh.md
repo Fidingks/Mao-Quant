@@ -15,7 +15,7 @@
 ## 快速开始
 
 ```bash
-npx skills add huajuancat/mao-quant
+npx skills add Fidingks/Mao-Quant
 ```
 
 然后告诉你的 AI 助手：
