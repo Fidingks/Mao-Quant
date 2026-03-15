@@ -176,6 +176,63 @@ quick_scan(pre_filter=None, max_results=50, sort_key="close", ascending=False)
 
 ---
 
+## PDF Reports (Chinese font — MANDATORY)
+
+When generating PDF reports with `reportlab`, **Chinese characters WILL be garbled unless you register a CJK font first.** Always include the following block at the top of any PDF-generating script:
+
+```python
+import sys
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+def _register_cjk_font():
+    """Register a CJK font for reportlab. Tries common paths across platforms."""
+    candidates = []
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Windows\Fonts\simsun.ttc",   # SimSun (宋体) — most common
+            r"C:\Windows\Fonts\msyh.ttc",      # Microsoft YaHei (微软雅黑)
+            r"C:\Windows\Fonts\simhei.ttf",    # SimHei (黑体)
+        ]
+    elif sys.platform == "darwin":
+        candidates = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/Library/Fonts/Arial Unicode MS.ttf",
+        ]
+    else:  # Linux
+        candidates = [
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        ]
+    for path in candidates:
+        try:
+            pdfmetrics.registerFont(TTFont("CJK", path))
+            return "CJK"
+        except Exception:
+            continue
+    raise RuntimeError(
+        "No CJK font found. On Windows install SimSun; on Linux: "
+        "sudo apt install fonts-wqy-microhei"
+    )
+
+CJK_FONT = _register_cjk_font()
+```
+
+Then use `CJK_FONT` as the font name for all Chinese text in the PDF:
+
+```python
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+styles = getSampleStyleSheet()
+cn_style = ParagraphStyle("CN", parent=styles["Normal"], fontName=CJK_FONT, fontSize=10)
+Paragraph("策略名称：均线交叉", cn_style)
+```
+
+**Do NOT use the default `Helvetica` or `Times-Roman` fonts for Chinese content — they produce garbled output (乱码).**
+
+---
+
 ## Constraints
 
 1. **Raw data never enters AI context** — use `catquant.data_engine` inside scripts only
@@ -184,6 +241,7 @@ quick_scan(pre_filter=None, max_results=50, sort_key="close", ascending=False)
 3. Scripts go in `backtesting/` or `scanning/`
 4. No emoji in code or output
 5. Charts via `catquant.chart.render()`
+6. PDF reports must use a registered CJK font (see PDF Reports section above)
 
 ## Reference
 
