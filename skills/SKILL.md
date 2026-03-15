@@ -14,13 +14,26 @@ environment:
     - { name: TDX_DIR, required: false }
     - { name: CACHE_DIR, required: false, default: "./cache" }
 
-selftest: "python -m catquant.selftest"
+selftest: "cd skills && python -m catquant.selftest"
 ---
 
 <instructions>
 
 Parse `$ARGUMENTS`: first word is command (`backtest` or `scan`), rest are command args.
 If no arguments or unrecognized command, ask the user.
+
+## Setup
+
+The `catquant` package lives inside this skill directory. Every generated script must add it to `sys.path`:
+
+```python
+import sys, os
+# Add skill directory to path so catquant can be imported
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "$SKILL_DIR"))
+```
+
+`$SKILL_DIR` is the relative path from the script to this skill's directory (where `catquant/` lives).
+First run: `pip install -r $SKILL_DIR/requirements.txt` and `cp $SKILL_DIR/.env.sample .env` if `.env` doesn't exist.
 
 ---
 
