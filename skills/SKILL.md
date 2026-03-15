@@ -3,35 +3,8 @@ name: maoquant
 version: "0.2.0"
 spec: "skill-manifest/0.1"
 description: A-share quantitative backtesting skill system.
-
-capabilities:
-  - name: backtest
-    description: Run strategy backtest on A-share symbol
-    input: { strategy: string, symbol: string, interval: string }
-    output: { result_json: file, kline_png: file, equity_png: file }
-    invocable: true
-  - name: scan
-    description: Full-market stock screening
-    input: { criteria: string }
-    output: { scan_results: list, csv: file }
-    invocable: true
-  - name: catquant-expert
-    description: API reference and knowledge base
-    invocable: false
-  - name: data
-    description: Data engine reference
-    invocable: false
-
-contracts:
-  - id: data-isolation
-    enforcement: architectural
-    description: Raw data stays in scripts. BarSeries.__repr__ returns summary only.
-  - id: a-share-compliance
-    enforcement: code
-    description: T+1, price limits, lot sizing, fees enforced by backtest.run().
-  - id: no-emoji
-    enforcement: convention
-    description: No emoji in code or output.
+argument-hint: "[backtest|scan] [args...]"
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep
 
 environment:
   python: ">=3.9"
@@ -46,31 +19,120 @@ selftest: "python -m catquant.selftest"
 
 <instructions>
 
-## Sub-Skills
+Parse `$ARGUMENTS`: first word is command (`backtest` or `scan`), rest are command args.
+If no arguments or unrecognized command, ask the user.
 
-| Skill | Description | User-Invocable |
-|-------|-------------|----------------|
-| [backtest](backtest/SKILL.md) | Run a strategy backtest | Yes |
-| [scan](scan/SKILL.md) | Full-market stock screening | Yes |
-| [data](data/GUIDE.md) | Data engine reference | No |
-| [catquant-expert](catquant-expert/GUIDE.md) | API reference + knowledge base | No |
+---
 
-## Quickstart
+## Command: backtest
 
+**Arguments**: `backtest [strategy] [symbol] [interval]`
+
+- strategy: ema-crossover, rsi, macd, kdj, boll (default: ema-crossover)
+- symbol: e.g. SH600000, SZ000001 (default: SH600000)
+- interval: D, 5m, 1m (default: D)
+
+**Steps**:
+
+1. Read [catquant-expert](catquant-expert/GUIDE.md) for workflow, API, and strategy patterns
+2. Create script at `backtesting/{strategy_name}/{symbol}_{strategy}_backtest.py`
+3. The script must: load data, compute signals, run backtest, export JSON, render charts, print metrics
+4. Explain the backtest report in plain language
+
+### Chart Rendering
+
+**Always render charts with the strategy's indicator lines.** Use `overlays` for lines on the price chart and `panels` for separate indicator subplots. Pick the configuration matching the strategy:
+
+| Strategy | overlays (on price) | panels (subplots) |
+|----------|--------------------|--------------------|
+| **EMA Cross** | EMA fast + EMA slow lines | MACD panel (DIF/DEA lines + MACD bars + zero_line) |
+| **MACD** | EMA(12) + EMA(26) lines | MACD panel (DIF/DEA lines + MACD bars + zero_line) |
+| **RSI** | EMA(14) line | RSI panel (RSI line + overbought/oversold hlines) |
+| **KDJ** | -- | KDJ panel (K/D/J lines) |
+| **BOLL** | Upper + Mid + Lower lines + fill between upper/lower | -- |
+| **Custom** | Any indicator lines used in signals | Relevant oscillator if applicable |
+
+Example (EMA crossover):
 ```python
-from catquant.data_engine import get_history
-from catquant.backtest import run, export
-from catquant.chart import render
-from catquant.signals import exrem, cross_above, cross_below
+ema5 = ema_series(close, 5)
+ema20 = ema_series(close, 20)
+dif, dea, macd = getMACDData(close)
 
-bars = get_history("600000.SH", cycle=1440, count=1000)
-result = run(bars, buy_signal, sell_signal, initial_capital=100000, market="sh")
-export(result, bars, "backtesting/output", code="600000.SH", strategy="EMA Cross")
-render(result, bars, "backtesting/output")            # kline.png
-render(result, bars, "backtesting/output", "equity")  # equity.png
+render(result, bars, outdir, "kline",
+    overlays=[
+        {"data": ema5,  "label": "EMA5",  "color": "#ff9800"},
+        {"data": ema20, "label": "EMA20", "color": "#2196f3"},
+    ],
+    panels=[{
+        "title": "MACD",
+        "lines": [
+            {"data": dif, "label": "DIF", "color": "#2962ff"},
+            {"data": dea, "label": "DEA", "color": "#ff6d00"},
+        ],
+        "bars": [{"data": macd, "label": "MACD"}],
+        "zero_line": True,
+    }])
+render(result, bars, outdir, "equity")
 ```
 
-Details: see [catquant-expert](catquant-expert/GUIDE.md).
+**Color palette**: `#ff9800` (orange), `#2196f3` (blue), `#e040fb` (purple), `#00bcd4` (cyan), `#8bc34a` (green).
+Lines: `#2962ff` (DIF), `#ff6d00` (DEA), `#e040fb` (J line). Bars auto-colored red/green by sign.
+
+---
+
+## Command: scan
+
+**Arguments**: `scan [screening criteria]`
+
+Screening criteria in natural language. If empty, ask the user.
+
+**Steps**:
+
+1. Parse criteria into pre_filter (PriceData) and filter_fn (K-line) layers
+2. Create script at `scanning/{name}_scan.py`
+3. Run and show results
+
+### Choosing scan type
+
+- **Price/volume/PE only** (no K-line needed): `quick_scan(pre_filter)` -- instant
+- **Needs history** (MA, MACD, patterns): `scan(filter_fn, pre_filter)` -- two-layer
+
+### pre_filter (Layer 1)
+
+Receives `PriceData`. Key fields:
+`p.code`, `p.name`, `p.close`, `p.open`, `p.high`, `p.low`, `p.volume`, `p.amount`,
+`p.lastClose`, `p.pe`, `p.totalShares`, `p.flowShares`, `p.upperLimit`, `p.lowerLimit`
+
+```python
+p.volume > 0 and p.close > 3 and "ST" not in p.name  # typical
+```
+
+### filter_fn (Layer 2)
+
+Receives `(code, name, bars)`. Return `{"score": float, "reason": str, ...}` or `None`.
+
+```python
+def filter_fn(code, name, bars):
+    if len(bars) < 30:
+        return None
+    close, high, low, vol = bars_to_arrays(bars)
+    # ... compute indicators (use catquant.indicators) ...
+    if condition:
+        return {"score": value, "reason": "description"}
+    return None
+```
+
+### scan() / quick_scan()
+
+```python
+scan(filter_fn, pre_filter=None, universe=None, count=250,
+     cycle=1440, source="facecat", max_results=20,
+     sort_key="score", ascending=False, verbose=True, refresh=False)
+
+quick_scan(pre_filter=None, max_results=50, sort_key="close", ascending=False)
+```
+
+---
 
 ## Constraints
 
@@ -83,5 +145,10 @@ Details: see [catquant-expert](catquant-expert/GUIDE.md).
 3. **脚本放 `backtesting/` 目录**，扫描脚本放 `scanning/`
 4. **代码和输出中禁止 emoji**
 5. **图表用 matplotlib**（`catquant.chart.render()`）
+
+## Reference
+
+- [catquant-expert](catquant-expert/GUIDE.md) — API reference, indicators, strategy patterns
+- [data](data/GUIDE.md) — Data engine, SecurityData, symbol format
 
 </instructions>
