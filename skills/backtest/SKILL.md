@@ -28,7 +28,7 @@ If no arguments, ask the user.
 
 ## Instructions
 
-1. Read [catquant-expert](../catquant-expert/SKILL.md) for workflow, API, and strategy patterns
+1. Read [catquant-expert](../catquant-expert/GUIDE.md) for workflow, API, and strategy patterns
 2. Create script at `backtesting/{strategy_name}/{symbol}_{strategy}_backtest.py`
 3. The script must: load data, compute signals, run backtest, export JSON, render charts, print metrics
 4. Explain the backtest report in plain language

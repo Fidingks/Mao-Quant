@@ -52,8 +52,8 @@ selftest: "python -m catquant.selftest"
 |-------|-------------|----------------|
 | [backtest](backtest/SKILL.md) | Run a strategy backtest | Yes |
 | [scan](scan/SKILL.md) | Full-market stock screening | Yes |
-| [data](data/SKILL.md) | Data engine reference | No |
-| [catquant-expert](catquant-expert/SKILL.md) | API reference + knowledge base | No |
+| [data](data/GUIDE.md) | Data engine reference | No |
+| [catquant-expert](catquant-expert/GUIDE.md) | API reference + knowledge base | No |
 
 ## Quickstart
 
@@ -70,7 +70,7 @@ render(result, bars, "backtesting/output")            # kline.png
 render(result, bars, "backtesting/output", "equity")  # equity.png
 ```
 
-Details: see [catquant-expert](catquant-expert/SKILL.md).
+Details: see [catquant-expert](catquant-expert/GUIDE.md).
 
 ## Constraints
 
