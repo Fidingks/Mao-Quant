@@ -403,6 +403,144 @@ Save to: `backtesting/{strategy}/{symbol}_report.pdf`
 
 ---
 
+## TDX Formula Translation (通达信公式转 Python)
+
+When the user pastes a TDX/通达信 formula and asks to backtest or scan it, translate it to Python using these rules. **Do NOT run the formula text directly — always convert to Python first.**
+
+### TDX → Python mapping
+
+| TDX | Python (`bars` = List[SecurityData], arrays from `bars_to_arrays`) |
+|-----|---------------------------------------------------------------------|
+| `C` / `O` / `H` / `L` / `V` | `close[i]` / `open_[i]` / `high[i]` / `low[i]` / `vol[i]` |
+| `REF(X, N)` | `x[i - N]` |
+| `HHV(X, N)` | `np.max(x[i-N+1:i+1])` |
+| `LLV(X, N)` | `np.min(x[i-N+1:i+1])` |
+| `MA(X, N)` | `np.mean(x[i-N+1:i+1])` |
+| `EMA(X, N)` | `ema_series(x, N)[i]` |
+| `CROSS(A, B)` | `cross_above(a, b)[i]` |
+| `AND` / `OR` / `NOT` | `and` / `or` / `not` (Python booleans) |
+| `:=` (intermediate variable) | `var = expr` |
+| `XG:A AND B AND C;` (final signal) | `signal = a and b and c` |
+
+### Sliding-window scan pattern
+
+For a formula that checks the last N bars at each point in history:
+
+```python
+def check_pattern(o, h, l, c, v, i):
+    """Check if pattern triggers at bar index i."""
+    if i < 5:   # guard: need enough lookback
+        return False
+    # translate each TDX condition directly:
+    # A1:=REF(C,3)>REF(O,3)  ->
+    a1 = c[i-3] > o[i-3]
+    # A2:=REF(V,3)>REF(V,4)*1.8  ->
+    a2 = v[i-3] > v[i-4] * 1.8
+    # ...
+    return a1 and a2  # and all other conditions
+
+# Scan all bars
+signals = [i for i in range(5, len(bars)) if check_pattern(o, h, l, c, v, i)]
+```
+
+### Formula backtest vs single-stock backtest
+
+- **User says "回测这个公式" (no specific stock)** → Do a **historical pattern scan** across full TDX universe. For each signal found, record entry price and return after N days. Output: win rate, avg return, profit factor, trade list CSV.
+- **User says "用这个公式回测某只股票"** → Single-stock `backtest.run()` with `buy_signal` / `sell_signal` arrays derived from the formula.
+
+### For historical pattern scans (全市场历史扫描)
+
+```python
+# Build universe from TDX vipdoc
+def get_tdx_universe(tdx_dir):
+    universe = []
+    for mkt, pfx in [("sh","SH"), ("sz","SZ")]:
+        lday = os.path.join(tdx_dir, "vipdoc", mkt, "lday")
+        for f in os.listdir(lday):
+            if not f.endswith(".day"): continue
+            num = f[2:-4]
+            # A-shares only: skip indices/funds/bonds
+            if mkt == "sh" and not (num.startswith("6") or num.startswith("688")): continue
+            if mkt == "sz" and not (num.startswith("0") or num.startswith("3")): continue
+            universe.append(f"{num}.{pfx}")
+    return universe
+
+# Per-stock: slide window over full history
+for code in universe:
+    bars = get_history(code, count=2000, cycle=1440, source="tdx", tdx_dir=TDX_DIR)
+    o, h, l, c, v = ...  # arrays
+    for i in range(lookback, len(bars)):
+        if check_pattern(o, h, l, c, v, i):
+            entry = c[i]
+            for hold in [5, 10, 20]:
+                if i + hold < len(bars):
+                    ret = (c[i+hold] - entry) / entry * 100
+                    record(code, date, entry, ret, hold)
+```
+
+### 涨停 detection
+
+```python
+def is_limit_up(code, close, prev_close):
+    from catquant.backtest import get_limit_pct
+    limit = get_limit_pct(code)
+    return close >= round(prev_close * (1 + limit) - 0.01, 2)
+```
+
+### Output stats after pattern scan
+
+Always report:
+- 触发次数、按年份分布
+- 持有 5/10/20 天的：胜率、平均收益、盈亏比、最大单次盈亏
+- Top 10 最佳触发案例（表格）
+- 优化建议（加大盘过滤/收紧阈值/止损）
+
+---
+
+## Matplotlib Chinese Font (图表中文显示)
+
+Matplotlib 默认字体不支持中文，**所有含中文标签/标题的图表必须先注册字体**，否则显示方块乱码。
+
+```python
+import matplotlib
+import matplotlib.pyplot as plt
+from matplotlib.font_manager import fontManager
+
+def _setup_mpl_cjk():
+    candidates = []
+    import sys, os
+    if sys.platform == "win32":
+        candidates = [
+            r"C:\Windows\Fonts\simsun.ttc",
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\simhei.ttf",
+        ]
+    elif sys.platform == "darwin":
+        candidates = ["/System/Library/Fonts/PingFang.ttc"]
+    else:
+        candidates = ["/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"]
+    for path in candidates:
+        if os.path.exists(path):
+            fontManager.addfont(path)
+            from matplotlib.font_manager import FontProperties
+            name = FontProperties(fname=path).get_name()
+            matplotlib.rcParams["font.sans-serif"] = [name, "DejaVu Sans"]
+            matplotlib.rcParams["axes.unicode_minus"] = False
+            return
+    # fallback: suppress warnings and use English labels
+    import warnings
+    warnings.filterwarnings("ignore", "Glyph.*missing from font")
+
+_setup_mpl_cjk()  # call once before any plt usage
+```
+
+**Rules:**
+- Call `_setup_mpl_cjk()` at module level, before any `plt.` call
+- If no CJK font found, fall back to English axis labels (never crash)
+- `axes.unicode_minus = False` prevents minus sign rendering as a box
+
+---
+
 ## Constraints
 
 1. **Raw data never enters AI context** — use `catquant.data_engine` inside scripts only
