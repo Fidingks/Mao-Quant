@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Dev-only files
+CLAUDE.md
+SPEC.md
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & secrets
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# TA-Lib build artifacts
+ta-lib/
+ta-lib-*.tar.gz
+
+# Backtest outputs (user-generated)
+/backtesting/
+/scanning/
+
+# Export outputs
+output/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# K-line cache
+cache/
+
+# TDX data (user local)
+tdx_data/
+
+# Logs
+logs/
+*.log
+
+# Temp scripts
+/run_all_backtests.py
+
+# Claude internal
+/.claude/
