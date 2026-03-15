@@ -23,7 +23,7 @@ selftest: "cd $SKILL_DIR && python -m catquant.selftest"
 
 1. **NEVER ask the user for parameters.** User says "茅台均线能赚钱吗" → you pick strategy=ema-crossover, symbol=600519.SH, interval=D, and run it. Use sensible defaults for everything.
 2. **Resolve stock names yourself.** "茅台" = 600519.SH, "平安" = 601318.SH. Use `catquant.resolve.resolve(query)` to map names to codes. NEVER ask the user "请问茅台的代码是什么".
-3. **Validate data BEFORE running backtest.** Use `catquant.resolve.check_available(code)` to verify the stock has data. If not available, tell the user which data sources are supported and how to switch.
+3. **Validate data BEFORE running backtest — NEVER skip this.** Call `check_available(code)` and if it returns `False`, STOP immediately and tell the user. Do NOT assume data exists. Do NOT create a script without checking first. Most stocks are NOT covered by the free API.
 4. **Handle errors gracefully.** If data source fails, suggest alternatives (TDX local data, or contact developer). Never show raw Python tracebacks to the user.
 5. **One sentence = one complete result.** The user's single sentence should produce a full backtest report with charts. No intermediate questions, no "请确认参数" dialogues.
 
@@ -44,33 +44,35 @@ First run: `pip install -r $SKILL_DIR/requirements.txt` if dependencies are miss
 
 ---
 
-## Step 0: Resolve stock and validate data (ALWAYS do this first)
+## Step 0: Resolve stock and validate data (MANDATORY — do NOT skip)
 
-Before creating any backtest or scan script, resolve the stock and check data:
+**STOP. You MUST complete BOTH steps below BEFORE writing any backtest or scan script. If you skip `check_available`, the script WILL fail and the user gets nothing.**
 
 ```python
 from catquant.resolve import resolve, check_available
 
-# 1. Resolve name to code
+# Step 0a: Resolve name to code
 code, name = resolve("茅台")         # -> ("600519.SH", "茅台")
-code, name = resolve("600000")       # -> ("600000.SH", "浦发银行")
-code, name = resolve("SH600519")     # -> ("600519.SH", "茅台")
 
-# 2. Check data availability
+# Step 0b: Check data — YOU MUST DO THIS, DO NOT ASSUME DATA EXISTS
 ok, source, hint = check_available(code)
 if not ok:
-    # Tell the user: print(hint)
-    # hint explains: FaceCat only covers ~84 stocks, suggest TDX or contact developer
+    print(hint)   # Tell the user WHY it failed and HOW to fix it
+    sys.exit(1)   # STOP HERE. Do NOT create a backtest script.
 ```
 
-**If `check_available` returns `(False, "none", hint)`:**
-- Tell the user the stock is not covered by the free API
-- If TDX_DIR is set but stock not found: suggest downloading data in TDX client
-- If TDX_DIR is not set: suggest setting it up, or contact https://www.jjmfc.com for full-market access
-- **Do NOT silently fail or produce an empty backtest**
+**CRITICAL: If `check_available` returns `(False, ...)` you MUST:**
+1. **STOP** — do NOT proceed to create or run any backtest script
+2. Tell the user the stock is not covered, in plain language
+3. Give actionable next steps:
+   - If TDX_DIR is set but stock not found → "Please download this stock's data in your TDX client"
+   - If TDX_DIR is not set → "Set up TDX local data, or contact https://www.jjmfc.com for full-market access"
+4. **Do NOT silently fail, do NOT produce an empty backtest, do NOT skip this check**
 
-**If available via TDX:** use `source="tdx", tdx_dir=os.environ["TDX_DIR"]` in `get_history()`.
-**If available via FaceCat:** use `source="facecat"` (default).
+The free FaceCat API only covers ~84 stocks. Most stocks (including 茅台、比亚迪、宁德时代 etc.) are NOT covered. You MUST verify before proceeding.
+
+**If `ok` is True:** use the returned `source` value in `get_history()`:
+- `source="facecat"` (default) or `source="tdx", tdx_dir=os.environ["TDX_DIR"]`
 
 ---
 
