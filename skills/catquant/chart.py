@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator, FixedLocator
+from matplotlib.ticker import MaxNLocator, FixedLocator, FuncFormatter
 
 __all__ = ["render"]
 
@@ -194,7 +194,7 @@ def _draw_indicator_panel(ax, indices, panel: dict, t: dict):
 
 def render_kline(result: "BacktestResult", bars: list, outdir: str = ".",
                  out: Optional[str] = None, size: Tuple[float, float] = (19.2, 10.8),
-                 dpi: int = 100, theme: str = "dark",
+                 dpi: int = 100, theme: str = "light",
                  overlays: Optional[List[Dict[str, Any]]] = None,
                  panels: Optional[List[Dict[str, Any]]] = None) -> str:
     """Render K-line chart with trade markers, volume, and equity curve.
@@ -303,10 +303,26 @@ def render_kline(result: "BacktestResult", bars: list, outdir: str = ".",
         _draw_indicator_panel(panel_axes[i], indices, panel, t)
 
     # --- Equity curve ---
-    ax_e.plot(indices, result.equity, color=t["_equity_color"],
-              linewidth=1.2, label="Equity")
-    ax_e.fill_between(indices, result.equity,
-                      alpha=t["_equity_fill_alpha"], color=t["_equity_color"])
+    equity_arr = np.array(result.equity)
+    initial_cap = m.get("initial_capital", equity_arr[0])
+
+    ax_e.plot(indices, equity_arr, color=t["_equity_color"], linewidth=1.2, label="Equity")
+    # Fill profit (above baseline) and loss (below baseline)
+    ax_e.fill_between(indices, equity_arr, initial_cap,
+                      where=equity_arr >= initial_cap,
+                      color=t["_equity_color"], alpha=t["_equity_fill_alpha"])
+    ax_e.fill_between(indices, equity_arr, initial_cap,
+                      where=equity_arr < initial_cap,
+                      color=t["_dd_color"], alpha=0.25)
+    ax_e.axhline(initial_cap, color=t["_info_edge"], linewidth=0.8,
+                 linestyle="--", alpha=0.7)
+
+    # Y-axis: tight range + comma-formatted labels
+    eq_min, eq_max = equity_arr.min(), equity_arr.max()
+    pad = max((eq_max - eq_min) * 0.12, initial_cap * 0.03)
+    ax_e.set_ylim(eq_min - pad, eq_max + pad)
+    ax_e.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax_e.yaxis.set_major_locator(MaxNLocator(nbins=4, integer=True))
 
     # Max drawdown marker
     if len(result.drawdown) > 0:
@@ -315,14 +331,15 @@ def render_kline(result: "BacktestResult", bars: list, outdir: str = ".",
         if dd_val < 0:
             dd_date = dates_str[dd_idx] if dd_idx < len(dates_str) else ""
             ax_e.axvline(dd_idx, color=t["_dd_color"], linewidth=0.8,
-                         linestyle="--", alpha=0.6)
+                         linestyle="--", alpha=0.5)
+            text_x = dd_idx + N * 0.04 if dd_idx < N * 0.7 else dd_idx - N * 0.18
             ax_e.annotate(
                 f"MaxDD {dd_val*100:.1f}%\n{dd_date}",
-                xy=(dd_idx, result.equity[dd_idx]),
-                xytext=(dd_idx + N * 0.05, result.equity[dd_idx]),
-                fontsize=9, fontweight="bold", color=t["_dd_color"],
+                xy=(dd_idx, equity_arr[dd_idx]),
+                xytext=(text_x, equity_arr[dd_idx] - pad * 0.6),
+                fontsize=8, fontweight="bold", color=t["_dd_color"],
                 arrowprops=dict(arrowstyle="->", color=t["_dd_color"],
-                                lw=1.2, connectionstyle="arc3,rad=0.2"),
+                                lw=1.0, connectionstyle="arc3,rad=0.2"),
             )
 
     ax_e.set_ylabel("Equity")
@@ -347,7 +364,7 @@ def render_kline(result: "BacktestResult", bars: list, outdir: str = ".",
 
 def render_equity(result: "BacktestResult", bars: list, outdir: str = ".",
                   out: Optional[str] = None, size: Tuple[float, float] = (19.2, 10.8),
-                  dpi: int = 100, theme: str = "dark") -> str:
+                  dpi: int = 100, theme: str = "light") -> str:
     """Render equity curve with drawdown area."""
     t = _apply_theme(theme)
 
@@ -362,13 +379,26 @@ def render_equity(result: "BacktestResult", bars: list, outdir: str = ".",
     )
 
     # --- Equity ---
-    ax_eq.plot(indices, result.equity, color=t["_equity_color"],
-               linewidth=1.5, label="Equity")
-    ax_eq.fill_between(indices, result.equity,
-                       alpha=t["_equity_fill_alpha"], color=t["_equity_color"])
+    m = result.metrics
+    equity_arr = np.array(result.equity)
+    initial_cap = m.get("initial_capital", equity_arr[0])
+
+    ax_eq.plot(indices, equity_arr, color=t["_equity_color"], linewidth=1.5, label="Equity")
+    ax_eq.fill_between(indices, equity_arr, initial_cap,
+                       where=equity_arr >= initial_cap,
+                       color=t["_equity_color"], alpha=t["_equity_fill_alpha"])
+    ax_eq.fill_between(indices, equity_arr, initial_cap,
+                       where=equity_arr < initial_cap,
+                       color=t["_dd_color"], alpha=0.2)
+    ax_eq.axhline(initial_cap, color=t["_info_edge"], linewidth=0.8, linestyle="--", alpha=0.7)
+
+    eq_min, eq_max = equity_arr.min(), equity_arr.max()
+    pad = max((eq_max - eq_min) * 0.15, initial_cap * 0.03)
+    ax_eq.set_ylim(eq_min - pad, eq_max + pad)
+    ax_eq.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax_eq.yaxis.set_major_locator(MaxNLocator(nbins=5, integer=True))
 
     # Metrics summary panel
-    m = result.metrics
     eq_info = (
         f"Return   {m.get('total_return', 0)*100:+.2f}%\n"
         f"Annual   {m.get('annual_return', 0)*100:+.2f}%\n"
@@ -446,7 +476,7 @@ def render_equity(result: "BacktestResult", bars: list, outdir: str = ".",
 
 def render(result: "BacktestResult", bars: list, outdir: str = ".", chart_type: str = "kline",
            out: Optional[str] = None, size: Tuple[float, float] = (19.2, 10.8),
-           dpi: int = 100, theme: str = "dark",
+           dpi: int = 100, theme: str = "light",
            overlays: Optional[List[Dict[str, Any]]] = None,
            panels: Optional[List[Dict[str, Any]]] = None) -> str:
     """Render chart from BacktestResult + bars.
