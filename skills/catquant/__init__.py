@@ -9,8 +9,10 @@ from catquant import scanner
 from catquant import indicators
 from catquant import chart
 from catquant import signals
+from catquant import resolve
 
 __all__ = [
     "SecurityData", "LatestData", "PriceData", "normalize_symbol",
     "data_engine", "backtest", "scanner", "indicators", "chart", "signals",
+    "resolve",
 ]

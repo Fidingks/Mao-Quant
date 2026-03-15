@@ -1,6 +1,6 @@
 ---
 name: maoquant
-version: "0.2.0"
+version: "0.3.0"
 spec: "skill-manifest/0.1"
 description: A-share quantitative backtesting skill system.
 argument-hint: "[backtest|scan] [args...]"
@@ -14,63 +14,99 @@ environment:
     - { name: TDX_DIR, required: false }
     - { name: CACHE_DIR, required: false, default: "./cache" }
 
-selftest: "cd skills && python -m catquant.selftest"
+selftest: "cd $SKILL_DIR && python -m catquant.selftest"
 ---
 
 <instructions>
 
-Parse `$ARGUMENTS`: first word is command (`backtest` or `scan`), rest are command args.
-If no arguments or unrecognized command, ask the user.
+## Principles (MUST follow, read this FIRST)
+
+1. **NEVER ask the user for parameters.** User says "茅台均线能赚钱吗" → you pick strategy=ema-crossover, symbol=600519.SH, interval=D, and run it. Use sensible defaults for everything.
+2. **Resolve stock names yourself.** "茅台" = 600519.SH, "平安" = 601318.SH. Use `catquant.resolve.resolve(query)` to map names to codes. NEVER ask the user "请问茅台的代码是什么".
+3. **Validate data BEFORE running backtest.** Use `catquant.resolve.check_available(code)` to verify the stock has data. If not available, tell the user which data sources are supported and how to switch.
+4. **Handle errors gracefully.** If data source fails, suggest alternatives (TDX local data, or contact developer). Never show raw Python tracebacks to the user.
+5. **One sentence = one complete result.** The user's single sentence should produce a full backtest report with charts. No intermediate questions, no "请确认参数" dialogues.
+
+---
 
 ## Setup
 
-The `catquant` package lives inside this skill directory. Every generated script must add it to `sys.path`:
+The `catquant` package lives inside this skill directory (`$SKILL_DIR`). Every generated script must:
 
 ```python
 import sys, os
-# Add skill directory to path so catquant can be imported
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "$SKILL_DIR"))
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
 ```
 
-`$SKILL_DIR` is the relative path from the script to this skill's directory (where `catquant/` lives).
-First run: `pip install -r $SKILL_DIR/requirements.txt` and `cp $SKILL_DIR/.env.sample .env` if `.env` doesn't exist.
+First run: `pip install -r $SKILL_DIR/requirements.txt` if dependencies are missing.
+
+---
+
+## Step 0: Resolve stock and validate data (ALWAYS do this first)
+
+Before creating any backtest or scan script, resolve the stock and check data:
+
+```python
+from catquant.resolve import resolve, check_available
+
+# 1. Resolve name to code
+code, name = resolve("茅台")         # -> ("600519.SH", "茅台")
+code, name = resolve("600000")       # -> ("600000.SH", "浦发银行")
+code, name = resolve("SH600519")     # -> ("600519.SH", "茅台")
+
+# 2. Check data availability
+ok, source, hint = check_available(code)
+if not ok:
+    # Tell the user: print(hint)
+    # hint explains: FaceCat only covers ~84 stocks, suggest TDX or contact developer
+```
+
+**If `check_available` returns `(False, "none", hint)`:**
+- Tell the user the stock is not covered by the free API
+- If TDX_DIR is set but stock not found: suggest downloading data in TDX client
+- If TDX_DIR is not set: suggest setting it up, or contact https://www.jjmfc.com for full-market access
+- **Do NOT silently fail or produce an empty backtest**
+
+**If available via TDX:** use `source="tdx", tdx_dir=os.environ["TDX_DIR"]` in `get_history()`.
+**If available via FaceCat:** use `source="facecat"` (default).
 
 ---
 
 ## Command: backtest
 
-**Arguments**: `backtest [strategy] [symbol] [interval]`
+Parse `$ARGUMENTS`: `backtest [strategy] [symbol] [interval]`
 
-- strategy: ema-crossover, rsi, macd, kdj, boll (default: ema-crossover)
-- symbol: e.g. SH600000, SZ000001 (default: SH600000)
-- interval: D, 5m, 1m (default: D)
+- strategy: ema-crossover, rsi, macd, kdj, boll. **Default: ema-crossover** (do NOT ask)
+- symbol: stock name or code. **Default: SH600000** (do NOT ask)
+- interval: D, 5m, 1m. **Default: D** (do NOT ask)
 
 **Steps**:
 
-1. Read [catquant-expert](catquant-expert/GUIDE.md) for workflow, API, and strategy patterns
-2. Create script at `backtesting/{strategy_name}/{symbol}_{strategy}_backtest.py`
-3. The script must: load data, compute signals, run backtest, export JSON, render charts, print metrics
-4. Explain the backtest report in plain language
+1. Resolve stock name → code (Step 0 above)
+2. Validate data availability (Step 0 above)
+3. Read [catquant-expert](catquant-expert/GUIDE.md) for API and strategy patterns
+4. Create script at `backtesting/{strategy_name}/{symbol}_{strategy}_backtest.py`
+5. Script must: load data, compute signals, run backtest, export JSON, render charts with indicator lines, print metrics
+6. Run the script
+7. Explain the backtest report in plain language to the user
 
 ### Chart Rendering
 
-**Always render charts with the strategy's indicator lines.** Use `overlays` for lines on the price chart and `panels` for separate indicator subplots. Pick the configuration matching the strategy:
+**Always render charts with the strategy's indicator lines.** Use `overlays` for lines on the price chart and `panels` for indicator subplots:
 
 | Strategy | overlays (on price) | panels (subplots) |
 |----------|--------------------|--------------------|
-| **EMA Cross** | EMA fast + EMA slow lines | MACD panel (DIF/DEA lines + MACD bars + zero_line) |
-| **MACD** | EMA(12) + EMA(26) lines | MACD panel (DIF/DEA lines + MACD bars + zero_line) |
-| **RSI** | EMA(14) line | RSI panel (RSI line + overbought/oversold hlines) |
+| **EMA Cross** | EMA fast + EMA slow lines | MACD panel (DIF/DEA + MACD bars + zero_line) |
+| **MACD** | EMA(12) + EMA(26) lines | MACD panel (DIF/DEA + MACD bars + zero_line) |
+| **RSI** | EMA(14) line | RSI panel (RSI line) |
 | **KDJ** | -- | KDJ panel (K/D/J lines) |
-| **BOLL** | Upper + Mid + Lower lines + fill between upper/lower | -- |
-| **Custom** | Any indicator lines used in signals | Relevant oscillator if applicable |
+| **BOLL** | Upper + Mid + Lower lines + fill | -- |
+| **Custom** | Indicator lines used in signals | Relevant oscillator |
 
-Example (EMA crossover):
+Example:
 ```python
-ema5 = ema_series(close, 5)
-ema20 = ema_series(close, 20)
-dif, dea, macd = getMACDData(close)
-
 render(result, bars, outdir, "kline",
     overlays=[
         {"data": ema5,  "label": "EMA5",  "color": "#ff9800"},
@@ -88,54 +124,45 @@ render(result, bars, outdir, "kline",
 render(result, bars, outdir, "equity")
 ```
 
-**Color palette**: `#ff9800` (orange), `#2196f3` (blue), `#e040fb` (purple), `#00bcd4` (cyan), `#8bc34a` (green).
-Lines: `#2962ff` (DIF), `#ff6d00` (DEA), `#e040fb` (J line). Bars auto-colored red/green by sign.
-
 ---
 
 ## Command: scan
 
-**Arguments**: `scan [screening criteria]`
+Parse `$ARGUMENTS`: `scan [screening criteria]`
 
-Screening criteria in natural language. If empty, ask the user.
+Natural language criteria. **Default: scan all stocks** (do NOT ask for clarification if criteria is clear enough).
 
 **Steps**:
 
-1. Parse criteria into pre_filter (PriceData) and filter_fn (K-line) layers
+1. Parse criteria into pre_filter (PriceData fields) and filter_fn (K-line indicators)
 2. Create script at `scanning/{name}_scan.py`
 3. Run and show results
 
-### Choosing scan type
+### Scan types
 
-- **Price/volume/PE only** (no K-line needed): `quick_scan(pre_filter)` -- instant
-- **Needs history** (MA, MACD, patterns): `scan(filter_fn, pre_filter)` -- two-layer
+- **Price/volume/PE only**: `quick_scan(pre_filter)` — instant, no K-line download
+- **Needs indicators**: `scan(filter_fn, pre_filter)` — two-layer, downloads K-lines
 
 ### pre_filter (Layer 1)
 
-Receives `PriceData`. Key fields:
-`p.code`, `p.name`, `p.close`, `p.open`, `p.high`, `p.low`, `p.volume`, `p.amount`,
-`p.lastClose`, `p.pe`, `p.totalShares`, `p.flowShares`, `p.upperLimit`, `p.lowerLimit`
-
 ```python
-p.volume > 0 and p.close > 3 and "ST" not in p.name  # typical
+lambda p: p.volume > 0 and p.close > 3 and "ST" not in p.name
 ```
+
+Fields: `p.code, p.name, p.close, p.open, p.high, p.low, p.volume, p.amount, p.lastClose, p.pe, p.totalShares, p.flowShares, p.upperLimit, p.lowerLimit`
 
 ### filter_fn (Layer 2)
 
-Receives `(code, name, bars)`. Return `{"score": float, "reason": str, ...}` or `None`.
-
 ```python
 def filter_fn(code, name, bars):
-    if len(bars) < 30:
-        return None
+    if len(bars) < 30: return None
     close, high, low, vol = bars_to_arrays(bars)
-    # ... compute indicators (use catquant.indicators) ...
-    if condition:
-        return {"score": value, "reason": "description"}
+    # compute indicators...
+    if condition: return {"score": value, "reason": "..."}
     return None
 ```
 
-### scan() / quick_scan()
+### API
 
 ```python
 scan(filter_fn, pre_filter=None, universe=None, count=250,
@@ -149,19 +176,16 @@ quick_scan(pre_filter=None, max_results=50, sort_key="close", ascending=False)
 
 ## Constraints
 
-1. **数据不进上下文** — 通过 `catquant.data_engine` 在脚本内获取数据；禁止将原始 K 线打印给 agent；禁止直接构造 API 请求
-2. **A 股规则不可违反** — `catquant.backtest.run()` 已内置：
-   - T+1: 当日买入不可当日卖出（`price_field="open"`）
-   - 涨跌停: 主板 ±10%，创业板/科创板 ±20%，北交所 ±30%
-   - 整手交易: 最小 100 股
-   - 费用: 佣金万 2.5 + 印花税千 1（卖出）+ 过户费十万分之 1.6（沪市）
-3. **脚本放 `backtesting/` 目录**，扫描脚本放 `scanning/`
-4. **代码和输出中禁止 emoji**
-5. **图表用 matplotlib**（`catquant.chart.render()`）
+1. **Raw data never enters AI context** — use `catquant.data_engine` inside scripts only
+2. **A-share compliance auto-enforced** by `backtest.run()`:
+   - T+1, price limits (10%/20%/30%), lot sizing (100 shares), fees
+3. Scripts go in `backtesting/` or `scanning/`
+4. No emoji in code or output
+5. Charts via `catquant.chart.render()`
 
 ## Reference
 
-- [catquant-expert](catquant-expert/GUIDE.md) — API reference, indicators, strategy patterns
+- [catquant-expert](catquant-expert/GUIDE.md) — API, indicators, strategy patterns
 - [data](data/GUIDE.md) — Data engine, SecurityData, symbol format
 
 </instructions>
